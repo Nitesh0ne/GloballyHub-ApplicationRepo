@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.github
+.env
+.env.*
+!.env.example
+.vendure
+static/assets
+static/email/test-emails
+npm-debug.log*
+Dockerfile
+README.md

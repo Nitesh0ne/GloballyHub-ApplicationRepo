@@ -1,0 +1,52 @@
+name: vendure-devops-assignment
+
+services:
+  postgres_db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "${DB_PORT:-6543}:5432"
+    volumes:
+      - postgres_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  vendure_app:
+    image: vendure-devops-assignment:optimized
+    restart: unless-stopped
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+    ports:
+      - "${VENDURE_SERVER_PORT:-3000}:3000"
+    environment:
+      APP_ENV: ${APP_ENV}
+      VENDURE_SERVER_PORT: 3000
+      COOKIE_SECRET: ${COOKIE_SECRET}
+      SUPERADMIN_USERNAME: ${SUPERADMIN_USERNAME}
+      SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD}
+
+      # Docker-internal PostgreSQL connection
+      DB_HOST: postgres_db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_SCHEMA: ${DB_SCHEMA}
+
+    healthcheck:
+     test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+     interval: 10s
+     timeout: 5s
+     retries: 5
+     start_period: 30s
+
+volumes:
+  postgres_db_data:
