@@ -1,4 +1,3 @@
-```yaml
 name: Application CI/CD
 
 on:
@@ -174,4 +173,3 @@ jobs:
 
           git commit -m "chore: deploy ${{ github.sha }} to ${{ steps.environment.outputs.name }}"
           git push origin main
-```
