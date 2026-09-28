@@ -91,10 +91,10 @@ jobs:
         run: |
           if [[ "${GITHUB_REF_NAME}" == "main" || "${GITHUB_REF_NAME}" == "prod" ]]; then
             echo "name=production" >> "$GITHUB_OUTPUT"
-            echo "values_file=environments/production/values.yaml" >> "$GITHUB_OUTPUT"
+            echo "values_file=production/values.yaml" >> "$GITHUB_OUTPUT"
           else
             echo "name=staging" >> "$GITHUB_OUTPUT"
-            echo "values_file=environments/staging/values.yaml" >> "$GITHUB_OUTPUT"
+            echo "values_file=staging/values.yaml" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout GitOps repository
@@ -103,6 +103,18 @@ jobs:
           repository: ${{ env.GITOPS_REPOSITORY }}
           token: ${{ secrets.GITOPS_REPO_TOKEN }}
           path: gitops
+
+      - name: Verify GitOps values file
+        working-directory: gitops
+        env:
+          VALUES_FILE: ${{ steps.environment.outputs.values_file }}
+        run: |
+          if [[ ! -f "$VALUES_FILE" ]]; then
+            echo "::error::GitOps values file does not exist: $VALUES_FILE"
+            echo "Available files:"
+            find . -type f \( -name '*.yaml' -o -name '*.yml' \) | sort
+            exit 1
+          fi
 
       - name: Update GitOps image
         shell: bash
@@ -155,21 +167,14 @@ jobs:
 
       - name: Show GitOps change
         working-directory: gitops
+        env:
+          VALUES_FILE: ${{ steps.environment.outputs.values_file }}
         run: |
-          git diff -- environments/staging/values.yaml environments/production/values.yaml
+          git diff -- "$VALUES_FILE"
 
       - name: Commit GitOps image update
         working-directory: gitops
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add "${{ steps.environment.outputs.values_file }}"
-
-          if git diff --cached --quiet; then
-            echo "No GitOps changes detected."
-            exit 0
-          fi
-
-          git commit -m "chore: deploy ${{ github.sha }} to ${{ steps.environment.outputs.name }}"
-          git push origin main
+          git config user.email "41898282
+
