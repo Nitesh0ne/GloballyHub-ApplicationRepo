@@ -1,28 +1,35 @@
-name: Vendure CI
+```yaml
+name: Application CI/CD
 
 on:
   push:
     branches:
       - main
+      - prod
+      - staging
+      - develop
+
   pull_request:
     branches:
       - main
+      - prod
+      - staging
+      - develop
 
 permissions:
   contents: read
-  packages: write
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  DOCKERHUB_IMAGE: docker.io/Nitesh0ne/globallyhub-app
+  GITOPS_REPOSITORY: Nitesh0ne/GloballyHub-GitOps
 
 jobs:
-  build:
-    name: Build and Push Docker Image
+  validate:
+    name: Validate Application
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout application repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -37,27 +44,134 @@ jobs:
       - name: Build application
         run: npm run build
 
-      - name: Log in to GitHub Container Registry
-        if: github.event_name == 'push'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
-
       - name: Build Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name == 'push' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          push: false
+          tags: ${{ env.DOCKERHUB_IMAGE }}:${{ github.sha }}
+
+  publish:
+    name: Publish and Update GitOps
+    runs-on: ubuntu-latest
+    needs: validate
+
+    if: >
+      github.event_name == 'push' &&
+      (
+        github.ref_name == 'main' ||
+        github.ref_name == 'prod' ||
+        github.ref_name == 'staging' ||
+        github.ref_name == 'develop'
+      )
+
+    environment:
+      name: ${{ (github.ref_name == 'main' || github.ref_name == 'prod') && 'production' || 'staging' }}
+
+    steps:
+      - name: Checkout application repository
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.DOCKERHUB_IMAGE }}:${{ github.sha }}
+
+      - name: Determine GitOps environment
+        id: environment
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "main" || "${GITHUB_REF_NAME}" == "prod" ]]; then
+            echo "name=production" >> "$GITHUB_OUTPUT"
+            echo "values_file=environments/production/values.yaml" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=staging" >> "$GITHUB_OUTPUT"
+            echo "values_file=environments/staging/values.yaml" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPOSITORY }}
+          token: ${{ secrets.GITOPS_REPO_TOKEN }}
+          path: gitops
+
+      - name: Update GitOps image
+        shell: bash
+        env:
+          VALUES_FILE: ${{ steps.environment.outputs.values_file }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          values_file = Path("gitops") / os.environ["VALUES_FILE"]
+          image_tag = os.environ["IMAGE_TAG"]
+          image_repository = "docker.io/Nitesh0ne/globallyhub-app"
+
+          content = values_file.read_text()
+
+          lines = content.splitlines()
+
+          in_image = False
+          repository_updated = False
+          tag_updated = False
+
+          for i, line in enumerate(lines):
+              stripped = line.strip()
+
+              if stripped == "image:":
+                  in_image = True
+                  continue
+
+              if in_image and stripped and not line.startswith(" "):
+                  in_image = False
+
+              if in_image and stripped.startswith("repository:"):
+                  lines[i] = f"  repository: {image_repository}"
+                  repository_updated = True
+
+              if in_image and stripped.startswith("tag:"):
+                  lines[i] = f'  tag: "{image_tag}"'
+                  tag_updated = True
+
+          if not repository_updated:
+              raise SystemExit(f"Could not find image.repository in {values_file}")
+
+          if not tag_updated:
+              raise SystemExit(f"Could not find image.tag in {values_file}")
+
+          values_file.write_text("\n".join(lines) + "\n")
+          PY
+
+      - name: Show GitOps change
+        working-directory: gitops
+        run: |
+          git diff -- environments/staging/values.yaml environments/production/values.yaml
+
+      - name: Commit GitOps image update
+        working-directory: gitops
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "${{ steps.environment.outputs.values_file }}"
+
+          if git diff --cached --quiet; then
+            echo "No GitOps changes detected."
+            exit 0
+          fi
+
+          git commit -m "chore: deploy ${{ github.sha }} to ${{ steps.environment.outputs.name }}"
+          git push origin main
+```
