@@ -89,13 +89,8 @@ jobs:
         id: environment
         shell: bash
         run: |
-          if [[ "${GITHUB_REF_NAME}" == "main" || "${GITHUB_REF_NAME}" == "prod" ]]; then
-            echo "name=production" >> "$GITHUB_OUTPUT"
-            echo "values_file=production/values.yaml" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=staging" >> "$GITHUB_OUTPUT"
-            echo "values_file=staging/values.yaml" >> "$GITHUB_OUTPUT"
-          fi
+          echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          echo "values_file=helm/application/values.yaml" >> "$GITHUB_OUTPUT"
 
       - name: Checkout GitOps repository
         uses: actions/checkout@v4
