@@ -4,14 +4,14 @@ on:
   push:
     branches:
       - main
-      - prod
+      - production
       - staging
       - develop
 
   pull_request:
     branches:
       - main
-      - prod
+      - production
       - staging
       - develop
 
@@ -59,13 +59,13 @@ jobs:
       github.event_name == 'push' &&
       (
         github.ref_name == 'main' ||
-        github.ref_name == 'prod' ||
+        github.ref_name == 'production' ||
         github.ref_name == 'staging' ||
         github.ref_name == 'develop'
       )
 
     environment:
-      name: ${{ (github.ref_name == 'main' || github.ref_name == 'prod') && 'production' || 'staging' }}
+      name: ${{ (github.ref_name == 'main' || github.ref_name == 'production') && 'production' || 'staging' }}
 
     steps:
       - name: Checkout application repository
@@ -89,8 +89,13 @@ jobs:
         id: environment
         shell: bash
         run: |
-          echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          echo "values_file=helm/application/values.yaml" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF_NAME}" == "main" || "${GITHUB_REF_NAME}" == "production" ]]; then
+            echo "name=production" >> "$GITHUB_OUTPUT"
+            echo "values_file=helm/application/values.yaml" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=staging" >> "$GITHUB_OUTPUT"
+            echo "values_file=helm/application/values.yaml" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Checkout GitOps repository
         uses: actions/checkout@v4
@@ -134,4 +139,51 @@ jobs:
           tag_updated = False
 
           for i, line in enumerate(lines):
-
+              stripped = line.strip()
+
+              if stripped == "image:":
+                  in_image = True
+                  continue
+
+              if in_image and stripped and not line.startswith(" "):
+                  in_image = False
+
+              if in_image and stripped.startswith("repository:"):
+                  lines[i] = f"  repository: {image_repository}"
+                  repository_updated = True
+
+              if in_image and stripped.startswith("tag:"):
+                  lines[i] = f'  tag: "{image_tag}"'
+                  tag_updated = True
+
+          if not repository_updated:
+              raise SystemExit(f"Could not find image.repository in {values_file}")
+
+          if not tag_updated:
+              raise SystemExit(f"Could not find image.tag in {values_file}")
+
+          values_file.write_text("\n".join(lines) + "\n")
+          PY
+
+      - name: Show GitOps change
+        working-directory: gitops
+        env:
+          VALUES_FILE: ${{ steps.environment.outputs.values_file }}
+        run: |
+          git diff -- "$VALUES_FILE"
+
+      - name: Commit GitOps image update
+        working-directory: gitops
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "${{ steps.environment.outputs.values_file }}"
+
+          if git diff --cached --quiet; then
+            echo "No GitOps changes detected."
+            exit 0
+          fi
+
+          git commit -m "chore: deploy ${{ github.sha }} to ${{ steps.environment.outputs.name }}"
+          git push origin main
