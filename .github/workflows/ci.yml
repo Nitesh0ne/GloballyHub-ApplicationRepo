@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - production
+      - prod
       - staging
       - develop
 
@@ -12,6 +13,7 @@ on:
     branches:
       - main
       - production
+      - prod
       - staging
       - develop
 
@@ -60,12 +62,13 @@ jobs:
       (
         github.ref_name == 'main' ||
         github.ref_name == 'production' ||
+        github.ref_name == 'prod' ||
         github.ref_name == 'staging' ||
         github.ref_name == 'develop'
       )
 
     environment:
-      name: ${{ (github.ref_name == 'main' || github.ref_name == 'production') && 'production' || 'staging' }}
+      name: ${{ (github.ref_name == 'main' || github.ref_name == 'production' || github.ref_name == 'prod') && 'production' || 'staging' }}
 
     steps:
       - name: Checkout application repository
@@ -89,12 +92,18 @@ jobs:
         id: environment
         shell: bash
         run: |
-          if [[ "${GITHUB_REF_NAME}" == "main" || "${GITHUB_REF_NAME}" == "production" ]]; then
+          if [[ "${GITHUB_REF_NAME}" == "main" || \
+                "${GITHUB_REF_NAME}" == "production" || \
+                "${GITHUB_REF_NAME}" == "prod" ]]; then
+
             echo "name=production" >> "$GITHUB_OUTPUT"
-            echo "values_file=helm/application/values.yaml" >> "$GITHUB_OUTPUT"
+            echo "values_file=environments/production/values.yaml" >> "$GITHUB_OUTPUT"
+
           else
+
             echo "name=staging" >> "$GITHUB_OUTPUT"
-            echo "values_file=helm/application/values.yaml" >> "$GITHUB_OUTPUT"
+            echo "values_file=environments/staging/values.yaml" >> "$GITHUB_OUTPUT"
+
           fi
 
       - name: Checkout GitOps repository
@@ -111,7 +120,7 @@ jobs:
         run: |
           if [[ ! -f "$VALUES_FILE" ]]; then
             echo "::error::GitOps values file does not exist: $VALUES_FILE"
-            echo "Available files:"
+            echo "Available YAML files:"
             find . -type f \( -name '*.yaml' -o -name '*.yml' \) | sort
             exit 1
           fi
@@ -121,6 +130,7 @@ jobs:
         env:
           VALUES_FILE: ${{ steps.environment.outputs.values_file }}
           IMAGE_TAG: ${{ github.sha }}
+          IMAGE_REPOSITORY: ${{ env.DOCKERHUB_IMAGE }}
         run: |
           python3 - <<'PY'
           import os
@@ -128,10 +138,9 @@ jobs:
 
           values_file = Path("gitops") / os.environ["VALUES_FILE"]
           image_tag = os.environ["IMAGE_TAG"]
-          image_repository = "docker.io/Nitesh0ne/globallyhub-app"
+          image_repository = os.environ["IMAGE_REPOSITORY"]
 
           content = values_file.read_text()
-
           lines = content.splitlines()
 
           in_image = False
@@ -157,10 +166,14 @@ jobs:
                   tag_updated = True
 
           if not repository_updated:
-              raise SystemExit(f"Could not find image.repository in {values_file}")
+              raise SystemExit(
+                  f"Could not find image.repository in {values_file}"
+              )
 
           if not tag_updated:
-              raise SystemExit(f"Could not find image.tag in {values_file}")
+              raise SystemExit(
+                  f"Could not find image.tag in {values_file}"
+              )
 
           values_file.write_text("\n".join(lines) + "\n")
           PY
@@ -170,20 +183,31 @@ jobs:
         env:
           VALUES_FILE: ${{ steps.environment.outputs.values_file }}
         run: |
+          echo "GitOps environment: ${{ steps.environment.outputs.name }}"
+          echo "Values file: $VALUES_FILE"
+          echo "Image: ${{ env.DOCKERHUB_IMAGE }}"
+          echo "Tag: ${{ github.sha }}"
+          echo
+          echo "Git diff:"
           git diff -- "$VALUES_FILE"
 
       - name: Commit GitOps image update
         working-directory: gitops
+        env:
+          VALUES_FILE: ${{ steps.environment.outputs.values_file }}
+          DEPLOYMENT_ENVIRONMENT: ${{ steps.environment.outputs.name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add "${{ steps.environment.outputs.values_file }}"
+          git add "$VALUES_FILE"
 
           if git diff --cached --quiet; then
             echo "No GitOps changes detected."
             exit 0
           fi
 
-          git commit -m "chore: deploy ${{ github.sha }} to ${{ steps.environment.outputs.name }}"
+          git commit \
+            -m "chore: deploy ${GITHUB_SHA} to ${DEPLOYMENT_ENVIRONMENT}"
+
           git push origin main
