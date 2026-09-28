@@ -34,7 +34,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -134,51 +134,4 @@ jobs:
           tag_updated = False
 
           for i, line in enumerate(lines):
-              stripped = line.strip()
-
-              if stripped == "image:":
-                  in_image = True
-                  continue
-
-              if in_image and stripped and not line.startswith(" "):
-                  in_image = False
-
-              if in_image and stripped.startswith("repository:"):
-                  lines[i] = f"  repository: {image_repository}"
-                  repository_updated = True
-
-              if in_image and stripped.startswith("tag:"):
-                  lines[i] = f'  tag: "{image_tag}"'
-                  tag_updated = True
-
-          if not repository_updated:
-              raise SystemExit(f"Could not find image.repository in {values_file}")
-
-          if not tag_updated:
-              raise SystemExit(f"Could not find image.tag in {values_file}")
-
-          values_file.write_text("\n".join(lines) + "\n")
-          PY
-
-      - name: Show GitOps change
-        working-directory: gitops
-        env:
-          VALUES_FILE: ${{ steps.environment.outputs.values_file }}
-        run: |
-          git diff -- "$VALUES_FILE"
-
-      - name: Commit GitOps image update
-        working-directory: gitops
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add "${{ steps.environment.outputs.values_file }}"
-
-          if git diff --cached --quiet; then
-            echo "No GitOps changes detected."
-            exit 0
-          fi
-
-          git commit -m "chore: deploy ${{ github.sha }} to ${{ steps.environment.outputs.name }}"
-          git push origin main
+
