@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 env:
-  DOCKERHUB_IMAGE: docker.io/Nitesh0ne/globallyhub-app
+  DOCKERHUB_IMAGE: docker.io/nitace/globallyhub-app
   GITOPS_REPOSITORY: Nitesh0ne/GloballyHub-GitOps
 
 jobs:
